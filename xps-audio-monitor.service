@@ -1,0 +1,11 @@
+[Unit]
+Description=Dell XPS 13 9345 Audio Monitor
+After=xps-audio-fix.service
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/xps-audio-monitor.sh
+Restart=always
+
+[Install]
+WantedBy=default.target

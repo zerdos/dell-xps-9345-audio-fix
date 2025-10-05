@@ -1,0 +1,11 @@
+[Unit]
+Description=Dell XPS 13 9345 Audio Fix
+After=sound.target pipewire.service wireplumber.service
+
+[Service]
+Type=oneshot
+ExecStart=/usr/local/bin/xps-audio-fix.sh
+RemainAfterExit=yes
+
+[Install]
+WantedBy=default.target
