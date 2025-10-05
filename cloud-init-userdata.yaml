@@ -1,0 +1,144 @@
+#cloud-config
+#
+# Cloud-init configuration for Dell XPS 13 9345 Audio Fix
+# Use this for automated Ubuntu deployments
+#
+# To use:
+# 1. Save this file as user-data
+# 2. Create empty meta-data file
+# 3. Create ISO: genisoimage -output seed.iso -volid cidata -joliet -rock user-data meta-data
+# 4. Attach seed.iso during installation
+#
+
+packages:
+  - cmake
+  - m4
+  - git
+  - alsa-utils
+
+write_files:
+  - path: /etc/modprobe.d/x1e-audio.conf
+    content: |
+      # Enable experimental audio support for Dell XPS 13 9345
+      options snd_soc_x1e80100 i_accept_the_danger=1
+    permissions: '0644'
+
+  - path: /usr/local/bin/xps-audio-fix.sh
+    content: |
+      #!/bin/bash
+      sleep 3
+      amixer -c 0 sset 'WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' on,on 2>/dev/null
+      amixer -c 0 sset 'WSA WSA RX0 MUX' 'AIF1_PB' 2>/dev/null
+      amixer -c 0 sset 'WSA WSA RX1 MUX' 'AIF1_PB' 2>/dev/null
+      amixer -c 0 sset 'WSA WSA_RX0 INP0' 'RX0' 2>/dev/null
+      amixer -c 0 sset 'WSA WSA_RX1 INP0' 'RX1' 2>/dev/null
+      amixer -c 0 sset 'WSA WSA_COMP1' on 2>/dev/null
+      amixer -c 0 sset 'WSA WSA_COMP2' on 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA RX0 MUX' 'AIF1_PB' 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA RX1 MUX' 'AIF1_PB' 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA_RX0 INP0' 'RX0' 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA_RX1 INP0' 'RX1' 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA_COMP1' on 2>/dev/null
+      amixer -c 0 sset 'WSA2 WSA_COMP2' on 2>/dev/null
+      for spk in TweeterLeft TweeterRight WooferLeft WooferRight; do
+        for ctrl in BOOST COMP DAC PBR VISENSE; do
+          amixer -c 0 sset "$spk $ctrl" on 2>/dev/null
+        done
+        amixer -c 0 sset "$spk PA" 70% 2>/dev/null
+      done
+      alsactl store 2>/dev/null
+      exit 0
+    permissions: '0755'
+
+  - path: /usr/local/bin/xps-audio-monitor.sh
+    content: |
+      #!/bin/bash
+      while true; do
+        sleep 5
+        ROUTING=$(amixer -c 0 sget 'WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' 2>/dev/null | grep "Front Right: Playback")
+        if echo "$ROUTING" | grep -q "\[off\]"; then
+          amixer -c 0 sset 'WSA_CODEC_DMA_RX_0 Audio Mixer MultiMedia2' on,on 2>/dev/null
+          amixer -c 0 sset 'WSA WSA RX0 MUX' 'AIF1_PB' 2>/dev/null
+          amixer -c 0 sset 'WSA WSA RX1 MUX' 'AIF1_PB' 2>/dev/null
+          amixer -c 0 sset 'WSA2 WSA RX0 MUX' 'AIF1_PB' 2>/dev/null
+          amixer -c 0 sset 'WSA2 WSA RX1 MUX' 'AIF1_PB' 2>/dev/null
+        fi
+      done
+    permissions: '0755'
+
+  - path: /etc/systemd/system/xps-audio-fix.service
+    content: |
+      [Unit]
+      Description=Dell XPS 13 9345 Audio Fix
+      After=sound.target alsa-restore.service
+
+      [Service]
+      Type=oneshot
+      ExecStart=/usr/local/bin/xps-audio-fix.sh
+      RemainAfterExit=yes
+
+      [Install]
+      WantedBy=multi-user.target
+    permissions: '0644'
+
+  - path: /etc/systemd/system/xps-audio-monitor.service
+    content: |
+      [Unit]
+      Description=Dell XPS 13 9345 Audio Monitor
+      After=xps-audio-fix.service
+
+      [Service]
+      Type=simple
+      ExecStart=/usr/local/bin/xps-audio-monitor.sh
+      Restart=always
+
+      [Install]
+      WantedBy=multi-user.target
+    permissions: '0644'
+
+runcmd:
+  # Build and install topology firmware
+  - mkdir -p /tmp/audio-fix
+  - cd /tmp/audio-fix
+  - git clone https://github.com/linux-msm/audioreach-topology.git
+  - cd audioreach-topology
+  - cmake .
+  - make topology_X1E80100-Dell-XPS-13-9345
+  - cp qcom/x1e80100/dell/xps13-9345/X1E80100-Dell-XPS-13-9345-tplg.bin /lib/firmware/qcom/x1e80100/
+
+  # Install UCM configuration
+  - cd /tmp/audio-fix
+  - git clone -b dell-xps-9345 https://github.com/alexVinarskis/alsa-ucm-conf.git
+  - cd alsa-ucm-conf
+  - cp -r ucm2/Qualcomm/x1e80100/* /usr/share/alsa/ucm2/Qualcomm/x1e80100/
+  - mkdir -p /usr/share/alsa/ucm2/X1E80100DellXPS
+  - cp /usr/share/alsa/ucm2/Qualcomm/x1e80100/Slim7x-HiFi.conf /usr/share/alsa/ucm2/X1E80100DellXPS/HiFi.conf
+  - sed -i 's/\${CardId}/0/g' /usr/share/alsa/ucm2/X1E80100DellXPS/HiFi.conf
+
+  # Create main UCM config
+  - |
+    cat > /usr/share/alsa/ucm2/X1E80100DellXPS/X1E80100DellXPS.conf << 'EOF'
+    Syntax 4
+    SectionUseCase."HiFi" {
+      File "HiFi.conf"
+      Comment "HiFi quality Music."
+    }
+    Include.card-init.File "/lib/card-init.conf"
+    Include.ctl-remap.File "/lib/ctl-remap.conf"
+    Include.wsa-init.File "/codecs/wsa884x/four-speakers/init.conf"
+    Include.wsam-init.File "/codecs/qcom-lpass/wsa-macro/four-speakers/init.conf"
+    EOF
+
+  # Enable services
+  - systemctl daemon-reload
+  - systemctl enable xps-audio-fix.service
+  - systemctl enable xps-audio-monitor.service
+
+  # Cleanup
+  - rm -rf /tmp/audio-fix
+
+power_state:
+  mode: reboot
+  message: "Rebooting to apply audio configuration"
+  timeout: 30
+  condition: True
